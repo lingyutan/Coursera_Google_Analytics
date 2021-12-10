@@ -1,0 +1,115 @@
+---
+title: 'Case Study: How Does a Bike-Share Navigate Speedy Success?'
+author: "Lingyu Tan"
+date: "Dec 9, 2021"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Background (Ask)
+
+In 2016, Cyclistic launched a successful bike-share offering. Since then, the program has grown to a fleet of 5,824 bicycles that are geotracked and locked into a network of 692 stations across Chicago. The bikes can be unlocked from one station and returned to any other station in the system anytime.
+
+Until now, Cyclistic’s marketing strategy relied on building general awareness and appealing to broad consumer segments. One approach that helped make these things possible was the flexibility of its pricing plans: single-ride passes, full-day passes, and annual memberships. Customers who purchase single-ride or full-day passes are referred to as casual riders. Customers who purchase annual memberships are Cyclistic members.
+
+Cyclistic’s finance analysts have concluded that annual members are much more profitable than casual riders. Although the pricing flexibility helps Cyclistic attract more customers, Moreno believes that maximizing the number of annual members will be key to future growth. Rather than creating a marketing campaign that targets all-new customers, Moreno believes there is a very good chance to convert casual riders into members. She notes that casual riders are already aware of the Cyclistic program and have chosen Cyclistic for their mobility needs.
+
+Moreno has set a clear goal: Design marketing strategies aimed at converting casual riders into annual members. In order to do that, however, the marketing analyst team needs to better understand how annual members and casual riders differ, why casual riders would buy a membership, and how digital media could affect their marketing tactics. Moreno and her team are interested in analyzing the Cyclistic historical bike trip data to identify trends.
+
+Three questions will guide the future marketing program:
+
+1. **How do annual members and casual riders use Cyclistic bikes differently?**
+2. Why would casual riders buy Cyclistic annual memberships?
+3. How can Cyclistic use digital media to influence casual riders to become members?
+
+In this report, I will try to answer **the first question** with the following deliverables thus helping Cyclistic design marketing strategies:
+
+1. A clear statement of the business task
+2. A description of all data sources used
+3. Documentation of any cleaning or manipulation of data
+4. A summary of your analysis
+5. Supporting visualizations and key findings
+6. Your top three recommendations based on your analysis
+
+## Data Source (Prepare)
+
+The datasets which are used in this case study can be accessed [here](https://divvy-tripdata.s3.amazonaws.com/index.html). The datasets include previous 12 months of historical trip data (2020/12 - 2021/11) of Cyclistic, a fictional company. The data has been made available by Motivate International Inc. under this [license](https://www.divvybikes.com/data-license-agreement).
+
+### Setting up Environment
+
+```{r Load packages, include=FALSE}
+library(tidyverse)
+library(janitor)
+library(dplyr)
+library(pillar)
+```
+
+### Loading Datasets
+```{r Load data, eval = FALSE}
+### Load datasets
+data_202012 <- read_csv("Data/202012-divvy-tripdata.csv")
+data_202101 <- read_csv("Data/202101-divvy-tripdata.csv")
+data_202102 <- read_csv("Data/202102-divvy-tripdata.csv")
+data_202103 <- read_csv("Data/202103-divvy-tripdata.csv")
+data_202104 <- read_csv("Data/202104-divvy-tripdata.csv")
+data_202105 <- read_csv("Data/202105-divvy-tripdata.csv")
+data_202106 <- read_csv("Data/202106-divvy-tripdata.csv")
+data_202107 <- read_csv("Data/202107-divvy-tripdata.csv")
+data_202108 <- read_csv("Data/202108-divvy-tripdata.csv")
+data_202109 <- read_csv("Data/202109-divvy-tripdata.csv")
+data_202110 <- read_csv("Data/202110-divvy-tripdata.csv")
+data_202111 <- read_csv("Data/202111-divvy-tripdata.csv")
+
+### Combine datasets
+data <- rbind(data_202012, data_202101, data_202102, data_202103,
+              data_202104, data_202105, data_202106, data_202107,
+              data_202108, data_202109, data_202110, data_202111)
+```
+
+### Exploratory Description
+```{r Exploratory}
+glimpse(data)
+```
+
+### Cleaning Data
+```{r}
+### There is no duplicated rows so the sum is zero
+# sum(duplicated(data[, -1])) = 502
+dup <- duplicated(data[, -1])
+dup_data <- data[dup, ]
+dup_data[order(dup_data$started_at), ]
+# nrow(unique(data[, -1])) = 5478594
+
+```
+```{r test}
+data %>% filter(started_at == "2020-12-08 15:08:18 UTC")
+
+
+duplicated(iris)[140:143]
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

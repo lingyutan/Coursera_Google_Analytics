@@ -3,16 +3,24 @@ title: 'Case Study: How Does a Bike-Share Navigate Speedy Success?'
 author: "Lingyu Tan"
 date: "Dec 9, 2021"
 output:
-  pdf_document: default
-  html_document: default
+  html_document: 
+    toc: true
+    theme: united
+    number_sections: true
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+
+# Register an inline hook:
+knitr::knit_hooks$set(inline = function(x) {
+  x <- sprintf("%1.3f", x)
+  paste(x, collapse = ", ")
+})
 ```
 
 
-## Background (Ask)
+# Background (Ask)
 
 In 2016, Cyclistic launched a successful bike-share offering. Since then, the program has grown to a fleet of 5,824 bicycles that are geotracked and locked into a network of 692 stations across Chicago. The bikes can be unlocked from one station and returned to any other station in the system anytime.
 
@@ -37,22 +45,31 @@ In this report, I will try to answer **the first question** with the following d
 5. Supporting visualizations and key findings
 6. Your top three recommendations based on your analysis
 
-## Data Source (Prepare)
+# Data Source (Prepare)
 
 The datasets which are used in this case study can be accessed [here](https://divvy-tripdata.s3.amazonaws.com/index.html). The datasets include previous 12 months of historical trip data (2020/12 - 2021/11) of Cyclistic, a fictional company. The data has been made available by Motivate International Inc. under this [license](https://www.divvybikes.com/data-license-agreement).
 
-### Setting up Environment
+## Setting up Environment
 
-```{r Load packages, include=FALSE}
+```{r Load packages, results = "hide", message = FALSE}
 library(tidyverse)
 library(janitor)
-library(dplyr)
-library(pillar)
+library(scales)
 ```
 
-### Loading Datasets
-```{r Load data, eval = FALSE}
+<!-- ### Defining Functions -->
+<!-- ```{r Load fuctions} -->
+<!-- swap <- function(x, y){ -->
+<!--   temp <- x -->
+<!--   x <- y -->
+<!--   y <- temp -->
+<!-- } -->
+<!-- ``` -->
+
+## Loading Datasets
+```{r Load data, message = FALSE}
 ### Load datasets
+# data <- read_csv("Data/202012-divvy-tripdata.csv")
 data_202012 <- read_csv("Data/202012-divvy-tripdata.csv")
 data_202101 <- read_csv("Data/202101-divvy-tripdata.csv")
 data_202102 <- read_csv("Data/202102-divvy-tripdata.csv")
@@ -70,32 +87,267 @@ data_202111 <- read_csv("Data/202111-divvy-tripdata.csv")
 data <- rbind(data_202012, data_202101, data_202102, data_202103,
               data_202104, data_202105, data_202106, data_202107,
               data_202108, data_202109, data_202110, data_202111)
+
+# rm(data_202012, data_202101, data_202102, data_202103,
+#    data_202104, data_202105, data_202106, data_202107,
+#    data_202108, data_202109, data_202110, data_202111)
 ```
 
-### Exploratory Description
+## Data Structure
 ```{r Exploratory}
 glimpse(data)
 ```
 
-### Cleaning Data
+In this datasets, there are overall 5,479,096 observations and 13 variables, including 7 character, 4 double, 2 date-time. Just to clarify, `start_lat` means the latitude of starting point, and `start_lng` means the longitude of starting point.
+
+# Cleaning Data (Process)
+
+First we need to check if there is duplicated data in the dataset.
+```{r}
+sum(duplicated(data$ride_id))
+```
+
+We see that `ride_id` seems to be a unique identifier without repetition thus there seems to be no duplicates. We can check all the records without `ride_id` to see what happens.
+
 ```{r}
 ### There is no duplicated rows so the sum is zero
-# sum(duplicated(data[, -1])) = 502
-dup <- duplicated(data[, -1])
-dup_data <- data[dup, ]
-dup_data[order(dup_data$started_at), ]
-# nrow(unique(data[, -1])) = 5478594
+# sum(duplicated(data[, -1]))
+# = 502
 
-```
-```{r test}
-data %>% filter(started_at == "2020-12-08 15:08:18 UTC")
+# data_no_id <- data[, -1]
+# dup <- duplicated(data_no_id)
+# dup_data <- data[dup, ]
+# dup_data[order(dup_data$started_at), ]
 
-
-duplicated(iris)[140:143]
-
-
+# nrow(unique(data[, -1]))
+# = 5478594
 ```
 
+There are 502 out of 5,479,096 records are duplicates without considering `ride_id`. We can have a look at one duplicate below:
+```{r test duplicate}
+data %>% filter(started_at == "2020-12-01 14:17:37 UTC")
+```
+
+We clearly see that all records of these two observations are identical except `ride_id`. It is possible that a couple start their journey at the same time/place and end simultaneously. Therefore, we decide not to remove these potential "duplicates". (If given more information such as `user_id`, we could better decide if it is necessary to remove these "duplicates".)
+
+In this report we are not interested in the information related to the locations (`start_station_name`, `start_station_id`, `end_station_name`, `end_station_id`, `start_lat`, `start_lng`, `end_lat`, `end_lng`) so we will not clean these data. We know for sure that theoretically `ended_at` must happen after `started_at`, we can check this by the following code.
+
+```{r}
+outlier <- data %>% filter(started_at > ended_at) %>% arrange(started_at)
+nrow(outlier)
+print(outlier)
+```
+
+After observing 581 abnormal data observations, we find that from the 57th outlier, there is a large difference between `started_at` and `ended_at`, which was probably due to errors when collecting data.
+
+```{r}
+print(outlier[57, ])
+```
+
+```{r}
+outlier_202012 <- data_202012 %>% filter(started_at > ended_at)
+nrow(outlier_202012)
+print(outlier_202012)
+```
+
+A large proportion (434/581) of outliers were in Dec, 2020, where somehow `started_at` is later than `ended_at` for around 20 days. We didn't know what was happened when collecting these data so we decided to simply remove the obviously abnormal data where the `started_at` is later than `ended_at` for more than 1 day, otherwise we assume that the records of `started_at` and `ended_at` were misplaced so we swap them. (Extra information is needed to decide how to deal with the abnormal data.)
+
+```{r}
+# Delete observations with `started_at` > `ended_at` for 1 day
+data_cleaned <- data %>% filter(started_at - ended_at <= 86400) # Delete > 1 days
+
+# Record id of abnormal observations
+swap_id <- which(data_cleaned$started_at > data_cleaned$ended_at)
+
+# Swap reversed values of `started_at` and `ended_at`
+temp <- data_cleaned[swap_id, "started_at"]
+data_cleaned[swap_id, "started_at"] <- data_cleaned[swap_id, "ended_at"]
+data_cleaned[swap_id, "ended_at"] <- temp
+
+```
+
+Now the data is clean, and we transform/trim the data so that it only contains necessary information.
+
+```{r}
+data_cleaned_trimmed <- data_cleaned %>%
+  mutate(ride_length = ended_at - started_at, day_of_week_char = weekdays(started_at)) %>%
+  mutate(ride_length_2 = as.integer(ride_length)) %>%
+  mutate(rideable_type_2 = as.factor(rideable_type)) %>%
+  mutate(member_casual_2 = as.factor(member_casual)) %>%
+  mutate(day_of_week = factor(day_of_week_char,
+                              levels = c("Sunday", "Monday", "Tuesday", "Wednesday",
+                                         "Thursday", "Friday", "Saturday"), ordered = TRUE)) %>%
+  # select(ride_id, rideable_type = rideable_type_2, member_casual = member_casual_2,
+  #        ride_length = ride_length_2, day_of_week)
+  select(ride_id, rideable_type = rideable_type_2, member_casual = member_casual_2,
+         ride_length = ride_length_2, day_of_week, started_at, ended_at,
+         start_lat, start_lng, end_lat, end_lng)
+```
+
+
+# Data Analysis (Analyze)
+
+## Descriptive Analysis
+First we run a descriptive analysis on the trimmed cleaned data:
+
+```{r}
+summary(data_cleaned_trimmed)
+```
+
+We have 5 variables: unique `ride_id`; three types of `rideable_type`: *classic_bike, docked_bike, electric_bike*; two types of `member_causal`: *member, casual*; numerical `ride_length` where the average length is 1328 seconds (22.13 minutes) and the longest length is 3356649 seconds (38.85 days), which seems acceptable; seven `day_of_week`: Sunday to Saturday.
+
+From the below figure we see that 59% of the bikes are classic bikes, and there are 35% electric bikes and only 6% docked bikes.
+
+```{r, out.width = "70%"}
+data_cleaned_trimmed %>%
+  group_by(rideable_type) %>%
+  count() %>%
+  ungroup() %>%
+  mutate(perc = `n` / sum(`n`)) %>%
+  mutate(labels = scales::percent(perc)) %>%
+  
+  ggplot(aes(x = "", y = n, fill = rideable_type)) +
+  geom_bar(stat = "identity", width = 1, color = "white") +
+  coord_polar("y", start = 0) +
+  theme_void() +
+  geom_text(aes(label = labels), position = position_stack(vjust = 0.5)) +
+  guides(fill = guide_legend(title = "Rideable Type"))
+```
+
+The percentage of members is 54.6%, which is slightly greater than that of causal users (45.4%).
+
+```{r, out.width = "70%"}
+data_cleaned_trimmed %>%
+  group_by(member_casual) %>%
+  count() %>%
+  ungroup() %>%
+  mutate(perc = `n` / sum(`n`)) %>%
+  mutate(labels = scales::percent(perc)) %>%
+  
+  ggplot(aes(x = "", y = n, fill = member_casual)) +
+  geom_bar(stat = "identity", width = 1, color = "white") +
+  coord_polar("y", start = 0) +
+  theme_void() +
+  geom_text(aes(label = labels), position = position_stack(vjust = 0.5)) +
+  guides(fill = guide_legend(title = "Member Status"))
+```
+
+By plotting a simple histogram we see that the distribution of ride lengths is right-skewed with occasional extremely large values. We notice that most of the ride lengths are less than 10,000 seconds so we filter the data and take a closer look at the distribution.By observing the following plot we see that the mode lies at around 500 seconds, after which the number of rides seems to be monotonically decreasing.
+
+```{r}
+data_cleaned_trimmed %>%
+  filter(ride_length < 10000) %>%
+  ggplot() +
+  geom_histogram(aes(ride_length), binwidth = 100, fill = "#00BFFF")
+```
+
+Also, we see that during weekdays, the number of rides is at a relatively low level (about 700,000) and shows obvious increase when it comes to weekends especially Saturdays (nearly 1,000,000).
+
+```{r}
+data_cleaned_trimmed %>%
+  ggplot(aes(x = day_of_week)) +
+  geom_bar(fill = "#00BFFF") +
+  geom_text(stat='count', aes(label = after_stat(count)), vjust = -0.4) +
+  labs(title = "Number of rides by Day of Week")
+```
+
+## Comparison between Causal Riders and Annual Members
+
+First, we calculate the average ride length for members and casual rides separately.
+
+```{r}
+data_cleaned_trimmed %>%
+  group_by(member_casual) %>%
+  summarise(`Average ride length` = mean(ride_length))
+```
+We find that causal users are likely to spend more time (18 minutes average) than members in a single ride. It might be because that casual users tend to use our bikes when the journey is relatively long, whilst members just frequently use our bikes regardless of the length of journey.
+ 
+Then we calculate the average ride length for members and casual rides by `day_of_week`:
+
+```{r}
+average_mc_dow_summary <- data_cleaned_trimmed %>%
+  group_by(member_casual, day_of_week) %>%
+  summarise(`Average ride length` = mean(ride_length), .groups = "drop")
+
+print(average_mc_dow_summary, n = nrow(average_mc_dow_summary))
+```
+
+And we use the following visualisation to help us better understand the user behaviour:
+
+```{r}
+average_mc_dow_summary %>%
+ggplot(aes(fill = member_casual, y = `Average ride length`, x = day_of_week)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_text(aes(label = round(`Average ride length`, 1)),
+            position = position_dodge(0.9), vjust = -0.5, size = 3) +
+  guides(fill = guide_legend(title = "Member Status")) +
+  labs(title = "Average Ride Length of Casual/Members by Day of Week",
+       y = "Average ride length (seconds)")
+```
+
+We see that the average ride length of members is relatively stable amongst days in a week, but for casual users the ride length at weekends is obviously longer. 
+
+```{r}
+data_cleaned_trimmed %>%
+  group_by(member_casual) %>%
+  count()
+```
+
+```{r}
+data_cleaned_trimmed %>%
+  group_by(day_of_week, member_casual) %>%
+  count() %>%
+
+  ggplot(aes(fill = member_casual, y = n, x = day_of_week)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_text(aes(label = n),
+            position = position_dodge(0.9), vjust = -0.5, size = 2.5) +
+  guides(fill = guide_legend(title = "Member Status")) +
+  ylab("Number of rides") +
+  labs(title = "Number of rides of Casual/Members by Day of Week")
+```
+
+Also, the number of rides shows similar features as the above average ride length. For annual members the number of rides seems stable where the minimum is on Sunday, but for casual users the numbers of rides on Friday, Saturday and Sunday are much greater than those of others, especially in Saturday. We guess that casual users are likely to use our service in Friday/weekends to travel whilst members usually use our services on weekdays to commute to work.
+
+Next, we can further look at the types of bikes users borrow as follows:
+
+```{r}
+data_cleaned_trimmed %>%
+  group_by(day_of_week, member_casual, rideable_type) %>%
+  count() %>%
+
+  ggplot(aes(fill = rideable_type, y = n, x = member_casual)) +
+  geom_bar(stat = "identity", position = "stack") +
+  guides(fill = guide_legend(title = "Ride Type")) +
+  ylab("Number of rides") +
+  labs(title = "Number of rides of Casual/Members by Ride Type in Distinct Day of Week") +
+  facet_wrap(~day_of_week, nrow = 1) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+The major difference is that almost no member use docked bike and quite a few casual users use docked bikes especially in Saturday and Sunday.
+
+# Conclusion
+
+From the above analysis, we can see the following differences between the behaviors of members and casual users:
+
+1. The average ride length of casual users (32.2 minutes) is longer than annual members (13.8 minutes), and casual users tend to ride a longer length on weekends (average 37.7 minutes on Sunday, 34.9 minutes on Saturday).
+
+2. Overall the number of rides of casual users (2,489,268) is 17% less than members (2,989,450). The number of rides of casual users is less than members on weekdays, whilst it is more than members on weekends.
+
+3. Classic bikes are most frequently used, electric bikes are the second, and docked bikes are the least used. Members usually do not use docked bikes, and quite a few casual users use docked bikes especially on weekends. Members like using classic bikes most and the frequency is about the same level during a week. Casual users also like using classic bikes and much more frequent on weekends. For electric bikes, the number of rides between two groups are approximately the same. It seems that casual users use electric bikes slightly frequently on weekends, whilst members use electric bikes slightly frequently on weekdays.
+
+
+# Recommendation
+
+Given the above conclusions and aiming to turn more casual users to members, we would make the following top three recommendations:
+
+1. We can charge casual users the rent based on the ride length. The longer the ride is, the more we charge, and the average charge of longer ride (e.g. more than 30 minutes) should be much more than annual members.
+
+2. Casual users are more likely to use our bikes on weekends so we can slightly increase our price (single-ride pass, full-day pass) on weekends. Also, we can create an annual weekend pass, say, free to use the service only on weekends and the price is slightly lower than normal annual pass, to attract more casual users who usually use our services on weekends to convert into annual members.
+
+3. Replace some docked bikes with electric bikes and classic ones, and slight increase the cost of using docked bikes.
+
+Furthermore, there are lots of other aspects we can work on. For instance, how many times will a all-day pass holder use our bikes. Based on the prices of all-day passes and single-ride passes, should we adjust them? We notice that many members tend to use our bikes to commute to work. Is it possible for us to advertise the benefits of riding to work? Also, to attract more casual users who use our bikes on weekends to travel, can we make a guide of riding routes in the city so people are willing to try them every weekends finding it cheaper to become annual members? (If possible, we can collect user id (unique but encrypted) to analyse individual behaviour to make better strategies.)
 
 
 
@@ -111,5 +363,24 @@ duplicated(iris)[140:143]
 
 
 
+
+
+
+
+
+
+
+
+
+&nbsp;
+
+
+```{r eval=FALSE, include=FALSE}
+
+data_trimmed <- data_cleaned %>%
+  select(ride_id, rideable_type, start_lat, start_lng, end_lat, end_lng,
+         member_casual, ride_length, day_of_week)
+write_csv(data_cleaned_trimmed, "Data/data_merge_cleaned_trimmed.csv")
+```
 
 

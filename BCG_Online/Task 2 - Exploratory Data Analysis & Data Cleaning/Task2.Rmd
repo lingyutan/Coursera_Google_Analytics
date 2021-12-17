@@ -1,0 +1,220 @@
+---
+title: "BCG - Task 2"
+author: "Lingyu Tan"
+output:
+  pdf_document:
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(lubridate)
+library(tidyverse)  
+```
+
+# Data loading
+
+First, we need to read all the data we got. We notice that "ml_case_training_output.csv" is the churn status for the clients in "ml_case_training_data.csv", so we also need to merge them into one data frame for convenience.
+
+```{r P1}
+
+### Read all csv files
+train_data <- read.csv("ml_case_training_data.csv")
+train_data_op <- read.csv("ml_case_training_output.csv")
+hist <- read.csv("ml_case_training_hist_data.csv")
+
+### Quick look at the data
+head(train_data)
+head(train_data_op)
+head(hist)
+
+### Merge dataset
+train <- merge(train_data, train_data_op, by = "id")
+```
+
+# Data type Conversions
+
+By looking at the name and class of each variable in the dataset, we then convert their types as follows (mainly convert characters to their corresponding types such as dates, factors or logical):
+
+```{r}
+
+### List names and types of variables
+names(train)
+lapply(train, class)
+names(hist)
+lapply(hist, class)
+
+### Convert Data Type
+train$date_activ <- as.Date(train$date_activ, "%Y/%m/%d")
+train$date_end <- as.Date(train$date_end, "%Y/%m/%d")
+train$date_first_activ <- as.Date(train$date_first_activ, "%Y/%m/%d")
+train$date_modif_prod <- as.Date(train$date_modif_prod, "%Y/%m/%d")
+train$date_renewal <- as.Date(train$date_renewal, "%Y/%m/%d")
+train$has_gas <- as.logical(toupper(train$has_gas))
+train$churn <- as.logical(train$churn)
+
+train$activity_new <- as.factor(train$activity_new)
+train$channel_sales<- as.factor(train$channel_sales)
+train$origin_up <- as.factor(train$origin_up)
+
+hist$price_date <- as.Date(hist$price_date, "%Y/%m/%d")
+
+```
+
+# Missing values disposal
+
+Also, it is obvious that there are tons of missing values in the dataset. We will see how often NAs appear in a variable. If the proportion of NAs for a variable is way too large, then it is hard to fill them with estimates and we might need to delete them (we notice that the missing rates of some explanatory variables are over 78% which means they will contribute little to our prediction model thus ignoring).
+
+```{r}
+colMeans(is.na(train))
+colMeans(is.na(hist))
+train_rm <- which(colMeans(is.na(train)) > 0.5)
+train <- train[, -train_rm]
+
+```
+
+After deleting those variables with too many NAs, there are still some NAs in our training dataset and they appear in the following explanatory variables:
+
+```{r}
+names(train)[unique(ceiling(which(is.na(train))/nrow(train)))]
+```
+
+We can replace the NAs with some specific values, for example, in 'forecast_discount_energy' we can replace all NAs with zeros. However, it can be extremely hard to do this kind of replacement if no other information is given, and there is only a fairly small proportion that have NAs, as a result we can simply ignore these items with NAs when building a regression model using the code below:
+
+```{r}
+### Inspect the id with NAs
+id.rm <- train[rowSums(is.na(train)) > 0, 1]
+
+### Delete the items with NAs in training dataset
+# train[rowSums(is.na(train)) > 0,]
+train_new <- na.omit(train)
+
+### Delete the items with corresponding id in historical dataset
+hist_new <- hist[!(hist$id %in% id.rm), ]
+```
+
+In the historical dataset we notice that some records for an id are incomplete as the number of items are not multiples of 12 (number of months) thus for some ids the historical data is missing and omitted in the dataset. We can scan the whole dataset and add the missing item or replace NAs using the nearest item without NAs under the same id. In this case, we assume that every id has at least one piece of data without NAs. The code is as follows:
+
+```{r}
+scan_i = 1
+while (!is.na(hist_new$id[scan_i]))
+{
+  if (month(hist_new$price_date[scan_i]) %% 12 != scan_i %% 12){
+    if (hist_new$id[scan_i-1] == hist_new$id[scan_i]){
+      hist_new <- hist_new %>% add_row(hist_new[scan_i - 1, ], .before = scan_i)
+    }
+    else {
+      hist_new <- hist_new %>% add_row(hist_new[scan_i, ], .before = scan_i)
+    }
+    hist_new$price_date[scan_i] <- hist_new$price_date[scan_i] %m+%
+      months(scan_i %% 12 - month(hist_new$price_date[scan_i]))
+  }
+  
+  if (sum(is.na(hist_new[scan_i, ])) > 0){
+    if (hist_new$id[scan_i-1] == hist_new$id[scan_i]){
+      hist_new[scan_i, 3:8] <- hist_new[scan_i-1, 3:8]
+    }
+    else {
+      for (k in 1:12) {
+        if (sum(is.na(hist_new[scan_i+k, 3:8])) == 0){
+          hist_new[scan_i, 3:8] <- hist_new[scan_i+k, 3:8]
+          break
+        }
+      }
+    }
+  }
+    
+  scan_i = scan_i + 1
+}
+
+```
+
+Then we can check if there is still NAs in our dataset as below:
+
+```{r}
+sum(is.na(hist_new))
+sum(is.na(train_new))
+```
+
+We see that both training and historical dataset have no NAs now. Next, to test multicollinearity, we can first have a look at the correlation matrix of numeric variables. 
+
+```{r}
+train_num <- unlist(lapply(train_new, is.numeric))
+X <- train[, train_num]
+cor(X, use = "complete.obs")
+```
+
+We see that there are quite a few large correlation coefficients greater than 0.9, for example, 'cons_12m' seems to be highly positive correlated with 'cons_last_month' with r = 0.9713. In our further regression models we need to take this into consideration and run a VIF test to confirm multicollinearity, then remove variables until all VIF scores are relatively low (e.g. < 4).
+
+And here we have the summary of our pretreated dataset:
+
+```{r}
+summary(hist_new)
+summary(train_new)
+```
+
+It is wired that some data which are supposed to be positive has some negative values, for example, prices/consumption should probably be positive. Here we assume that somehow we added a negative symbol by mistake, so we scan the two datasets and modify them to positive (or change to zero, more information needed. Besides, we can combine this scan with the above one to save time). 
+
+```{r}
+
+scan_i = 1
+for (scan_i in 1:nrow(hist_new)) {
+  for (j in 3:8){
+    if (hist_new[scan_i, j] < 0) hist_new[scan_i, j] = - hist_new[scan_i, j]
+  }
+}
+
+### seems all numeric variables in training dataset are strictly positive
+### more information needed
+train_num <- which(unlist(lapply(train_new, is.numeric)))
+scan_i = 1
+for (scan_i in 1: nrow(train_new)) {
+  for (j in train_num) {
+    if (train_new[scan_i, j] < 0) train_new[scan_i, j] = - train_new[scan_i, j]
+  }
+}
+```
+
+The updated summary is as follows:
+
+```{r}
+summary(hist_new)
+summary(train_new)
+```
+
+Now we are going to visualize the data to have a general idea about how they distribute. For example, we would like to know how the distribution of historical prices look like, the figures for the prices of energy/power for the 1st/2rd/3rd periods are listed below:
+
+```{r}
+hist(hist_new$price_p1_var)
+hist(hist_new$price_p2_var)
+hist(hist_new$price_p3_var)
+hist(hist_new$price_p1_fix)
+hist(hist_new$price_p2_fix)
+hist(hist_new$price_p3_fix)
+
+```
+
+For example, we see that thedistribution of prices of energy for the 1st period is unimodal with most prices concentrate at around 0.15, and very few price is close to 0 (might due to errors, as I don't believe there is such cheap price compared to others). Also, in training dataset, we can see the distribution of category of the company's activity, code of the sales channel and so on (issues showing the axis labels can be fixed by shorten the encrypted code, rename the variables or restyle the labelling area).
+
+```{r}
+summary(train_new$activity_new)
+barplot(summary(train_new$activity_new))
+summary(train_new$channel_sales)
+barplot(summary(train_new$channel_sales))
+summary(train_new$forecast_cons_12m)
+hist(train_new$forecast_cons_12m)
+summary(train_new$forecast_cons_year)
+hist(train_new$forecast_cons_year)
+summary(train_new$forecast_discount_energy)
+hist(train_new$forecast_discount_energy)
+summary(train_new$churn)
+barplot(table(train_new$churn))
+
+```
+
+For example, we see that 1525 out of 15761 customers chose to churn. To make more beautiful plots we can use advanced plotting packages such as `ggplot2` or `plotly`, or other visualisation software like Tableau.
+
+
+
+
+

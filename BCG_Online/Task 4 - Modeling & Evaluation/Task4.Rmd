@@ -1,0 +1,246 @@
+---
+title: "BCG - Task 4"
+author: "Lingyu Tan"
+output:
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(car)
+```
+
+First, load and process the dataset (We could have saved the R workspace so we don't need to process the data every time we save it as a csv file).
+
+```{r}
+data_combo <- read.csv("data_combo.csv")
+data_combo_new <- data_combo[, c(2:6, 11:36)]
+
+# Too many categories in `activity_new`.
+# Replace all NA and those whose occurrences are less than 30 with "Others"
+
+data_combo_new$activity_new[is.na(data_combo_new$activity_new)] <- "Others"
+data_combo_new$activity_new[data_combo_new$activity_new %in% names(which(table(data_combo_new$activity_new) < 30))] <- "Others"
+
+data_combo_new$activity_new <- as.factor(data_combo_new$activity_new)
+data_combo_new$channel_sales <- as.factor(data_combo_new$channel_sales)
+data_combo_new$origin_up <- as.factor(data_combo_new$origin_up)
+```
+
+Then we use a full dataset with all possible explanatory variables to fit a generalized linear model using logit link function as follows:
+
+```{r}
+churn_logit_full <- glm(churn ~ ., data = data_combo_new, family = binomial(link = logit))
+summary(churn_logit_full)
+```
+
+By observing the p-values we can see there are quite a lot insignificant variables to deal with and perhaps multicollinearity issues. We need to handle multicollinearity first as it will greatly influence the accuracy of p-values. Here we can find corresponding VIF:
+
+```{r}
+vif(churn_logit_full)
+```
+
+By observing GVIF^(1/(2*Df)), the prices of energy/power seem highly correlated, which can also be confirmed by the following correlation matrices:
+
+```{r}
+cor(data_combo_new[, 23:28])
+
+# Ignore the rows if `p3_var` is 0, which is similar to the above one
+# cor(data_combo_new[which(data_combo_new[, 25] != 0), 23:28])
+```
+
+Cor(p3_var, p3_fix) = 0.98 indicates a strong positive correlation between `p3_var` and `p3_fix`. Considering the GVIF, we can delete the variable with largest GVIF^(1/(2*Df)) value one by one until the model keeps all marginal significant explanatory variables.
+
+
+```{r}
+# m1: remove p3_var
+m1 <- update(churn_logit_full, . ~ . - p3_var)
+vif(m1)
+```
+
+
+```{r}
+# m2: remove p2_fix
+m2 <- update(m1, . ~ . - p2_fix)
+vif(m2)
+```
+
+```{r}
+# m3: remove forecast_cons_year
+m3 <- update(m2, . ~ . - forecast_cons_year)
+vif(m3)
+```
+
+```{r}
+# m4: remove p2_var
+m4 <- update(m3, . ~ . - p2_var)
+vif(m4)
+```
+
+```{r}
+# m5: remove forecast_price_energy_p1
+m5 <- update(m4, . ~ . - forecast_price_energy_p1)
+vif(m5)
+```
+
+```{r}
+# m6: remove day
+m6 <- update(m5, . ~ . - day)
+vif(m6)
+```
+
+```{r}
+# m7: remove cons_12m
+m7 <- update(m6, . ~ . - cons_12m)
+vif(m7)
+```
+
+```{r}
+# m8: remove p1_fix
+m8 <- update(m7, . ~ . - p1_fix)
+vif(m8)
+```
+
+```{r}
+# m9: remove p3_fix
+m9 <- update(m8, . ~ . - p3_fix)
+vif(m9)
+```
+
+```{r}
+# m10: remove forecast_cons_12m
+m10 <- update(m9, . ~ . - forecast_cons_12m)
+vif(m10)
+```
+
+```{r}
+# m11: remove margin_gross_pow_ele
+m11 <- update(m10, . ~ . - margin_gross_pow_ele)
+vif(m11)
+```
+
+Now every GVIF is less than 4 indicating removal of multicollinearity. Then we should deal with the insignificant explanatory variables by looking at their p-values.
+
+```{r}
+summary(m11)
+```
+
+Update the most insignificant variable according to the p-values in summary as below:
+
+```{r}
+# m12: remove nb_prod_act
+m12 <- update(m11, . ~ . - nb_prod_act)
+summary(m12)
+```
+
+
+```{r}
+# m13: remove imp_cons
+m13 <- update(m12, . ~ . - imp_cons)
+summary(m13)
+```
+```{r}
+# m14: remove day_renewal
+m14 <- update(m13, . ~ . - day_renewal)
+summary(m14)
+```
+
+```{r}
+# m15: remove p1_var
+m15 <- update(m14, . ~ . - p1_var)
+summary(m15)
+# anova(update(m15, . ~ has_gas +. ), test = "Chisq")
+# summary(update(m15, . ~ day_modif +. ))
+```
+
+```{r}
+# m16: remove day_modif
+m16 <- update(m15, . ~ . - day_modif)
+summary(m16)
+anova(m16, test = "Chisq")
+```
+
+```{r}
+# m17: By comparing the summary and ANOVA table of m16, we decide to remove forecast_discount_energy
+m17 <- update(m16, . ~ . - forecast_discount_energy)
+summary(m17)
+anova(m17, test = "Chisq")
+```
+
+```{r}
+# m18: remove has_gas
+m18 <- update(m17, . ~ . - has_gas)
+summary(m18)
+```
+
+```{r}
+# m19: remove forecast_price_pow_p1
+m19 <- update(m18, . ~ . - forecast_price_pow_p1)
+summary(m19)
+anova(m19, test = "Chisq")
+churn_final <- m19
+```
+
+Now all the remaining variables are at least marginally significant and the ANOVA table past Chi-squared test. In our final model, the churn rate will depend on category of the company's activity, code of the sales channel, gas consumption of the past 12 months, electricity consumption of the last month, forecasted bill of meter rental for the next 12 months, forecasted energy price for 2nd period, net margin on power subscription, total net margin, antiquity of the client (in number of years), code of the electricity campaign the customer first subscribed to and subscribed power.
+
+A negative estimate indicates that a client with the corresponding feature is less likely to churn, and a smaller p-value indicates a stronger impact of that feature. For example, a client from the sales channel lmkebamcaaclubfxadlmueccxoimlema is much less likely to churn and will be a loyal customer.
+
+During the constuction of our final model, we delete many variables due to multicollinearity or insignificance thus we may not be ablt to adjust the removed variable in our model. We notice that the p-value for `forecast_price_energy_p2` is only 0.057 and positive estimate means a larger forecasted energy price for 2nd period will lead to larger churn rate, which confirm the hypothesis that clients are price sensitive.
+
+And the churn probability and status can be predicted using the final model above as follows:
+
+```{r}
+churn_rate <- round(predict(churn_final, data_combo_new, type = "response"), 4)
+set.seed(2021)
+predict_churn <- rbinom(length(churn_rate), 1, prob = churn_rate)
+
+new.df <- data.frame(churn_rate, predict_churn)
+
+data_combo_predict <- cbind(data_combo_new, new.df)
+```
+
+Thus, the prediction accuracy is 82.60% as shown below:
+
+```{r}
+sum(data_combo_predict$churn == data_combo_predict$predict_churn) / nrow(data_combo_predict)
+```
+
+We then use a holdout set to evaluate our model. We devide the whole dataset into two: the first 14000 items for training and the remaining for testing.
+
+```{r}
+train_set <- data_combo_new[1:14000, ]
+test_set <- data_combo_new[14001:15761, ]
+churn_test <- update(churn_final, data = train_set)
+
+churn_rate <- round(predict(churn_test, test_set, type = "response"), 4)
+set.seed(2021)
+predict_churn <- rbinom(length(churn_rate), 1, prob = churn_rate)
+
+new.df <- data.frame(churn_rate, predict_churn)
+
+test_predict <- cbind(test_set, new.df)
+sum(test_predict$churn == test_predict$predict_churn) / nrow(test_predict)
+```
+
+And the prediction accuracy is 83.36%.
+
+Now we apply a 20% discount to `forecast_price_energy_p2` in our `churn_test` model and here is our prediction afterwards:
+
+```{r}
+test_set_2 <- test_set
+test_set_2$forecast_price_energy_p2 <- test_set$forecast_price_energy_p2 * 0.8
+
+churn_rate_2 <- round(predict(churn_test, test_set_2, type = "response"), 4)
+set.seed(2021)
+predict_churn_2 <- rbinom(length(churn_rate_2), 1, prob = churn_rate_2)
+
+sum(predict_churn)
+sum(predict_churn_2)
+
+
+```
+
+By comparing the two predicted churn status, there are only 1 out of 175 customer stop churning given a 20% discount, so we can conclude that there is no need to provide such discount.
+
+
+

@@ -3,20 +3,17 @@ title: 'Case Study: How Does a Bike-Share Navigate Speedy Success?'
 author: "Lingyu Tan"
 date: "Dec 9, 2021"
 output:
-  html_document: 
-    toc: true
+  pdf_document:
+    toc: yes
+    number_sections: yes
+  html_document:
+    toc: yes
     theme: united
-    number_sections: true
+    number_sections: yes
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-
-# Register an inline hook:
-knitr::knit_hooks$set(inline = function(x) {
-  x <- sprintf("%1.3f", x)
-  paste(x, collapse = ", ")
-})
 ```
 
 
